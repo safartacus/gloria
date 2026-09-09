@@ -1,18 +1,19 @@
-bin/
-obj/
+# build output
+[Bb]in/
+[Oo]bj/
 .vs/
 *.user
 node_modules/
 web/dist/
 .idea/
 
-# generated login credentials — never commit
-users/
+# generated login credentials — never commit (repo-root folder only, NOT source dirs named Users/)
+/users/
 
 # local environment — never commit (see .env.example)
-.env
-.env.*
-!.env.example
+/.env
+/.env.*
+!/.env.example
 
 # case study brief — hiring company material, keep out of history
 /Case Study.pdf
