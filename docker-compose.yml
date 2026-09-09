@@ -1,0 +1,87 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: gloria-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  seq:
+    image: datalust/seq:latest
+    container_name: gloria-seq
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"   # local/dev only — open UI, no login
+    ports:
+      - "${SEQ_PORT:-5341}:80"           # Seq UI + log ingestion
+    volumes:
+      - gloria-seq-data:/data
+    restart: unless-stopped
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: gloria-redisinsight
+    depends_on:
+      - redis
+    environment:
+      RI_ACCEPT_TERMS_AND_CONDITIONS: "true"
+      # auto-add the cache DB so keys are visible on first open
+      RI_REDIS_HOST: "redis"
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_ALIAS: "gloria-cache"
+    ports:
+      - "${REDISINSIGHT_PORT:-5540}:5540"          # cache browser
+    volumes:
+      - gloria-redisinsight:/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./api
+      dockerfile: src/Gloria.Api/Dockerfile
+    container_name: gloria-api
+    depends_on:
+      redis:
+        condition: service_healthy
+      seq:
+        condition: service_started
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ASPNETCORE_HTTP_PORTS: "8080"
+      TZ: ${TZ:-Europe/Istanbul}    # nightly job schedule + "run date" filter use this local day
+      ConnectionStrings__Gloria: "Data Source=/app/db/gloria.db"
+      Redis__ConnectionString: "redis:6379"
+      # index 1 = the Seq entry in Serilog:WriteTo; inside the network Seq is reachable as http://seq
+      Serilog__WriteTo__1__Args__serverUrl: "http://seq"
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in .env (copy .env.example)}
+      Gloria__AutoMigrate: "${GLORIA_AUTOMIGRATE:-true}"
+      Gloria__Credentials__Directory: "/app/users"
+      Gloria__SampleImport__Directory: "/app/data"
+      Gloria__PersonnelSync__FilePath: "/app/data/personel.csv"
+    ports:
+      - "${API_PORT:-5080}:8080"          # direct API + Swagger at /swagger
+    volumes:
+      - gloria-sqlite-data:/app/db  # the SQLite database file (gloria.db) — survives container rebuilds
+      - ./users:/app/users          # per-user credential notes for admin-created accounts (host-visible)
+      - ./data:/app/data:ro         # sample sales CSVs — read ONLY by the "try with sample data" button
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: gloria-web
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8080}:80"            # app (SPA + /api proxy)
+    restart: unless-stopped
+
+volumes:
+  gloria-sqlite-data:
+  gloria-redisinsight:
+  gloria-seq-data:
